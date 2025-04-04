@@ -40,7 +40,7 @@ func main() {
 		log.Fatalf(`delete "test" database: %s`, err)
 	}
 
-	const numIter = 500
+	const numIter = 5000
 	resusable := make(chan []bson.D, runtime.NumCPU()*2)
 	docC := make(chan []bson.D, runtime.NumCPU())
 
