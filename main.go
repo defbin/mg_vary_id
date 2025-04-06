@@ -21,6 +21,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const (
+	dbName   = "test"
+	collName = "vary_id"
+)
+
 func main() {
 	ctx := context.Background()
 
@@ -35,24 +40,23 @@ func main() {
 
 	defer source.Disconnect(context.Background())
 
-	err = source.Database("test").Drop(ctx)
+	err = source.Database(dbName).Collection(collName).Drop(ctx)
 	if err != nil {
-		log.Fatalf(`delete "test" database: %s`, err)
+		log.Fatalf(`drop %s.%s collection: %s`, dbName, collName, err)
 	}
 
-	const numIter = 5000
+	const numIter = 1000
 	resusable := make(chan []bson.D, runtime.NumCPU()*2)
 	docC := make(chan []bson.D, runtime.NumCPU())
 
-	data := make([]byte, 1_000_000)
+	data := make([]byte, 1_000)
 	rand.Read(data)
 
 	for range cap(resusable) {
-		docs := make([]bson.D, 43)
-		for i := range len(docs) - 1 {
+		docs := make([]bson.D, 42000)
+		for i := range len(docs) {
 			docs[i] = bson.D{{"_id", nil}, {"data", data}}
 		}
-		docs[len(docs)-1] = bson.D{{"data", data}}
 
 		resusable <- docs
 	}
@@ -60,34 +64,30 @@ func main() {
 	go func() {
 		defer close(docC)
 
-		data := make([]byte, 1_000_000)
-		rand.Read(data)
-
 		for i := range numIter {
-			oid := bson.NewObjectID()
 			docs := <-resusable
 
 			for j := 0; j < len(docs)-1; j += 6 {
 				docs[j+0][0].Value = bson.NewObjectID()
 				docs[j+1][0].Value = strconv.Itoa(i) + ":" + strconv.Itoa(j+1)
-				docs[j+2][0].Value = i*100 + j + 2
+				docs[j+2][0].Value = i*1000000 + j + 2
 				docs[j+3][0].Value = bson.Timestamp{uint32(i), uint32(j + 3)}
 				docs[j+4][0].Value = struct{ A, B int32 }{int32(i), int32(j + 4)}
-				docs[j+5][0].Value = time.Now().Add(time.Duration(i*100+j+5) * time.Second)
+				docs[j+5][0].Value = time.Now().Add(time.Duration(i*1000000+j+5) * time.Second)
 			}
-
-			docs[len(docs)-1][0].Value = oid
 
 			docC <- docs
 		}
 	}()
 
 	var globalInc atomic.Int64
+	globalInc.Store(numIter)
+
 	grp, grpCtx := errgroup.WithContext(ctx)
 
 	for range runtime.NumCPU() {
 		grp.Go(func() error {
-			coll := source.Database("test").Collection("vary_id")
+			coll := source.Database(dbName).Collection(collName)
 
 			for docs := range docC {
 				_, err = coll.InsertMany(grpCtx, docs)
@@ -97,7 +97,7 @@ func main() {
 
 				resusable <- docs
 
-				fmt.Printf("%d ", numIter-globalInc.Add(1))
+				fmt.Printf("%d ", globalInc.Add(-1))
 			}
 
 			return nil
